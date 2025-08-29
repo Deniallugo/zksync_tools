@@ -1,0 +1,15 @@
+id: 1
+name: era1
+chain_id: 270
+prover_version: NoProofs
+configs: /media/cyfra/storage/09_airbender_prover/zksync_tools/zkos/update_state_json/ecosystem/local_v1/chains/era1/configs/
+rocks_db_path: /media/cyfra/storage/09_airbender_prover/zksync_tools/zkos/update_state_json/ecosystem/local_v1/chains/era1/db/
+external_node_config_path: null
+artifacts_path: /media/cyfra/storage/09_airbender_prover/zksync_tools/zkos/update_state_json/ecosystem/local_v1/chains/era1/artifacts/
+l1_batch_commit_data_generator_mode: Rollup
+base_token:
+  address: '0x0000000000000000000000000000000000000001'
+  nominator: 1
+  denominator: 1
+wallet_creation: Localhost
+evm_emulator: false

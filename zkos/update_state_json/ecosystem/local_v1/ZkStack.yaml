@@ -1,0 +1,10 @@
+name: local_v1
+l1_network: Localhost
+link_to_code: /media/cyfra/storage/09_airbender_prover/zksync_tools/zkos/update_state_json/ecosystem/local_v1/../../repos/zksync-era
+bellman_cuda_dir: null
+chains: /media/cyfra/storage/09_airbender_prover/zksync_tools/zkos/update_state_json/ecosystem/local_v1/chains
+config: /media/cyfra/storage/09_airbender_prover/zksync_tools/zkos/update_state_json/ecosystem/local_v1/./configs/
+default_chain: era1
+era_chain_id: 270
+prover_version: NoProofs
+wallet_creation: Localhost
