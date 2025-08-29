@@ -136,6 +136,13 @@ create_snark_vk() {
     popd >/dev/null
 }
 
+create_solidity_files() {
+    pushd "repos/era-contracts/tools" >/dev/null
+    # Right now, we only update plonk!
+    cargo run --bin zksync_verifier_contract_generator --release -- --plonk_input_path ../../snark_vk_expected.json --fflonk_input_path data/fflonk_scheduler_key.json --plonk_output_path ../../L1VerifierPlonk.sol --fflonk_output_path ../l1-contracts/contracts/state-transition/verifiers/L1VerifierFflonk.sol
+    popd >/dev/null
+}
+
 # ---- main loop ----
 
 if [ $# -lt 1 ]; then
@@ -181,15 +188,29 @@ printf "*** Generating snark key ***\n"
 #create_snark_vk
 
 printf "*** Creating solidity files ***\n"
-
-pushd "repos/era-contracts/tools" >/dev/null
-# Right now, we only update plonk!
-cargo run --bin zksync_verifier_contract_generator --release -- --plonk_input_path ../../snark_vk_expected.json --fflonk_input_path data/fflonk_scheduler_key.json --plonk_output_path ../../L1VerifierPlonk.sol --fflonk_output_path ../l1-contracts/contracts/state-transition/verifiers/L1VerifierFflonk.sol
-popd >/dev/null
+#create_solidity_files
 
 printf "*** Copying values to $env_dir ***\n"
 cp repos/snark_vk_expected.json "$env_dir/"
 cp repos/L1VerifierPlonk.sol "$env_dir/"
+
+
+# if UPDATE_ERA_CONTRACTS is set - run the update
+if [ "${UPDATE_ERA_CONTRACTS:-}" = "true" ]; then
+  pushd "repos/era-contracts/tools" >/dev/null
+  cp ../../snark_vk_expected.json data/plonk_scheduler_key.json
+  cargo run --bin zksync_verifier_contract_generator --release -- --plonk_input_path data/plonk_scheduler_key.json --fflonk_input_path data/fflonk_scheduler_key.json --plonk_output_path ../l1-contracts/contracts/state-transition/verifiers/L1VerifierPlonk.sol --fflonk_output_path ../l1-contracts/contracts/state-transition/verifiers/L1VerifierFflonk.sol
+
+  # if there is any git diff - create a new branch and push.
+  if ! git diff --quiet; then
+    git checkout -b "update-vk-from-script-$(date +%Y%m%d%H%M%S)"
+    git add .
+    git commit -m "Update era contracts - server: $ZKSYNC_OS_SERVER_TAG, wrapper: $ZKOS_WRAPPER_TAG"
+    git push origin HEAD
+  fi
+
+  popd >/dev/null
+fi
 
 
 exit 0
