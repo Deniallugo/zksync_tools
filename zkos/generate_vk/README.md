@@ -25,3 +25,4 @@ UPDATE_ERA_CONTRACTS=true ./generate.sh versions/2025-08-29
 
 * Currently supporting only plonk (fflonk is not updated)
 * in the future, it should also show commands on how to do a call to update validator
+* need to add some sanity checks (and maybe commit support too?)

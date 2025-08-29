@@ -5,7 +5,7 @@ set -euo pipefail
 
 # ---- defaults & flags ----
 
-WITH_SUBMODULES=false
+WITH_SUBMODULES=true
 
 
 
@@ -172,23 +172,23 @@ fi
 
 printf "*** Fetching repositories ***\n"
 
-#clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-server" $ZKSYNC_OS_SERVER_TAG
-#clone_and_tag git@github.com:matter-labs/zkos-wrapper.git "repos/zkos-wrapper" $ZKOS_WRAPPER_TAG
-#clone_and_tag git@github.com:matter-labs/zksync-airbender-prover.git "repos/zksync-airbender-prover" $ZKSYNC_AIRBENDER_PROVER_TAG
-#clone_and_tag git@github.com:matter-labs/era-contracts.git "repos/era-contracts" $ERA_CONTRACTS_TAG
+clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-server" $ZKSYNC_OS_SERVER_TAG
+clone_and_tag git@github.com:matter-labs/zkos-wrapper.git "repos/zkos-wrapper" $ZKOS_WRAPPER_TAG
+clone_and_tag git@github.com:matter-labs/zksync-airbender-prover.git "repos/zksync-airbender-prover" $ZKSYNC_AIRBENDER_PROVER_TAG
+clone_and_tag git@github.com:matter-labs/era-contracts.git "repos/era-contracts" $ERA_CONTRACTS_TAG
 
 ## TODO: here add some sanity checks.
 
 
 printf "*** Downloading CRS ***\n"
 
-#download_crs
+download_crs
 
 printf "*** Generating snark key ***\n"
-#create_snark_vk
+create_snark_vk
 
 printf "*** Creating solidity files ***\n"
-#create_solidity_files
+create_solidity_files
 
 printf "*** Copying values to $env_dir ***\n"
 cp repos/snark_vk_expected.json "$env_dir/"
@@ -204,8 +204,7 @@ if [ "${UPDATE_ERA_CONTRACTS:-}" = "true" ]; then
   # if there is any git diff - create a new branch and push.
   if ! git diff --quiet; then
     git checkout -b "update-vk-from-script-$(date +%Y%m%d%H%M%S)"
-    git add .
-    git commit -m "Update era contracts - server: $ZKSYNC_OS_SERVER_TAG, wrapper: $ZKOS_WRAPPER_TAG"
+    git commit -a -m "Update era contracts - server: $ZKSYNC_OS_SERVER_TAG, wrapper: $ZKOS_WRAPPER_TAG"
     git push origin HEAD
   fi
 
