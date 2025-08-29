@@ -105,7 +105,9 @@ clone_and_tag() {
 build_zkstack() {
     printf "*** Compiling zkstack cli ***\n"
     pushd "repos/zksync-era-for-stack/zkstack_cli" >/dev/null
-    cargo build --bin zkstack
+    cargo build --release --bin zkstack
+    # mess with yarn
+    git reset --hard
     popd >/dev/null
 }
 
@@ -284,13 +286,13 @@ printf "*** Building zkstack cli ***\n"
 
 build_zkstack
 
-zkstack_tool=repos/zksync-era-for-stack/zkstack_cli/target/debug/zkstack
+zkstack_tool=repos/zksync-era-for-stack/zkstack_cli/target/release/zkstack
 
 printf "Initializing ecosystem...\n"
 
 pushd "ecosystem" >/dev/null
 
-../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation localhost --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false
+../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false
 
 popd >/dev/null
 
@@ -320,9 +322,12 @@ deploy_l1_contracts $ERA_CONTRACTS_TAG
 
 bridgehub_address=$(grep 'bridgehub_proxy_addr:' ecosystem/local_v1/chains/era1/configs/contracts.yaml | awk '{print $2}')
 
-deployer_pk=$(yq ".deployer.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
-operator_pk=$(yq ".operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
-blob_operator_pk=$(yq ".blob_operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+deployer_pk_dec=$(yq ".deployer.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+deployer_pk=0x$(echo "obase=16; $deployer_pk_dec" | bc | tr 'A-F' 'a-f')
+operator_pk_dec=$(yq ".operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+operator_pk=0x$(echo "obase=16; $operator_pk_dec" | bc | tr 'A-F' 'a-f')
+blob_operator_pk_dec=$(yq ".blob_operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+blob_operator_pk=0x$(echo "obase=16; $blob_operator_pk_dec" | bc | tr 'A-F' 'a-f')
 
 printf "BridgeHub address: %s\n" "$bridgehub_address"
 
@@ -334,28 +339,51 @@ cargo run -- --bridgehub "$bridgehub_address"
 popd > /dev/null
 
 
-printf "updating bridgehub address & operators keys in rust file...\n"
-
-update_bridgehub_address
-update_operator_keys $operator_pk $blob_operator_pk $deployer_pk
-
-
-
 printf "creating genesis file"
 
 # Now let's generate genesis.json file
 create_genesis_file
 
-printf "Copying genesis.json and zkos-l1-state.json to zksync-os-server...\n"
 
-cp genesis.json repos/zksync-os-server/genesis/genesis.json
-cp zkos-l1-state.json repos/zksync-os-server/genesis/zkos-l1-state.json
-
+printf "Stopping anvil"
 
 if ! kill -0 "$pid" 2>/dev/null; then
   echo "Process $pid crashed. Last 20 lines of log:"
   tail -n 20 "$logfile"
   exit 1
+fi
+
+
+
+if [ "${COMMIT_CHANGES:-}" = "true" ]; then
+
+    printf "updating bridgehub address & operators keys in rust file...\n"
+
+    update_bridgehub_address
+    update_operator_keys $operator_pk $blob_operator_pk $deployer_pk
+
+
+    printf "Copying genesis.json and zkos-l1-state.json to zksync-os-server...\n"
+
+
+    cp genesis.json repos/zksync-os-server/genesis/genesis.json
+    cp zkos-l1-state.json repos/zksync-os-server/zkos-l1-state.json
+
+
+
+
+  pushd "repos/zksync-os-server" >/dev/null
+  
+  # if there is any git diff - create a new branch and push.
+  if ! git diff --quiet; then
+    git checkout -b "update-state-from-script-$(date +%Y%m%d%H%M%S)"
+    git commit -a -m "Update state - contracts: $ERA_CONTRACTS_TAG, zkstack tool: $ZKSYNC_ERA_STACK_CLI_TAG"
+    git push origin HEAD
+  fi
+
+  popd >/dev/null
+else
+    printf "zkos-l1-state and genesis json are ready. If you want automatic commit - re-run with COMMIT_CHANGES=true\n"
 fi
 
 printf "All done.\n"
