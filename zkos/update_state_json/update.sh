@@ -6,8 +6,6 @@ set -euo pipefail
 WITH_SUBMODULES=true
 
 
-
-
 verify_clean_worktree() {
 # Fail if there are unstaged or staged changes
 if ! git diff --quiet --no-ext-diff; then
@@ -150,8 +148,7 @@ deploy_l1_contracts() {
     log=$(mktemp)
 
 
-    # FIXME - use local zkstack.
-    if zkstack ecosystem init --deploy-paymaster=false --deploy-erc20=false --observability=false \
+    if ../../$zkstack_tool ecosystem init --deploy-paymaster=false --deploy-erc20=false --observability=false \
     --deploy-ecosystem --l1-rpc-url=http://localhost:8545 --chain era1 \
     --server-db-url=postgres://invalid --server-db-name=invalid --update-submodules=false 2>&1 | tee "$log"; then
         rc=0
@@ -177,6 +174,91 @@ deploy_l1_contracts() {
 }
 
 
+update_bridgehub_address() {
+    NEW_ADDR=$bridgehub_address perl -0777 -i -pe '
+    my $new = $ENV{"NEW_ADDR"};
+    s{
+        (\#\s*\[config\([^\)]*default_t\s*=\s*")   # everything up to opening quote
+        0x[0-9a-fA-F]{40}                          # old address
+        ("\.parse\(\)\.unwrap\(\)\)\])             # rest of the attribute
+    }{$1$new$2}xg
+    ' "repos/zksync-os-server/node/bin/src/config.rs"
+}
+
+update_operator_keys() {
+
+  NEW_PK="$1" perl -0777 -i -pe '
+  my $new = $ENV{NEW_PK} // die "NEW_PK not set\n";
+  s{
+    ( \#\s*\[config\([^\)]*?\bdefault_t\s*=\s*")          # up to the opening quote
+    0x[0-9a-fA-F]{64}                                     # old 64-hex value
+    (" \s* \. \s* into \s* \(\) \s* \) \s* \] )           # the trailing ".into()]" (spaces allowed)
+    (?= \s* (?:\/\/[^\n]*\n|\s)*                          # allow whitespace/comments
+        pub \s+ operator_commit_pk \s* : \s* SecretString  # ensure this is the right field
+        \s* , )
+  }{$1$new$2}sgx;
+' "repos/zksync-os-server/lib/l1_sender/src/config.rs"
+
+
+  NEW_PK="$2" perl -0777 -i -pe '
+  my $new = $ENV{NEW_PK} // die "NEW_PK not set\n";
+  s{
+    ( \#\s*\[config\([^\)]*?\bdefault_t\s*=\s*")          # up to the opening quote
+    0x[0-9a-fA-F]{64}                                     # old 64-hex value
+    (" \s* \. \s* into \s* \(\) \s* \) \s* \] )           # the trailing ".into()]" (spaces allowed)
+    (?= \s* (?:\/\/[^\n]*\n|\s)*                          # allow whitespace/comments
+        pub \s+ operator_prove_pk \s* : \s* SecretString  # ensure this is the right field
+        \s* , )
+  }{$1$new$2}sgx;
+' "repos/zksync-os-server/lib/l1_sender/src/config.rs"
+
+
+
+  NEW_PK="$3" perl -0777 -i -pe '
+  my $new = $ENV{NEW_PK} // die "NEW_PK not set\n";
+  s{
+    ( \#\s*\[config\([^\)]*?\bdefault_t\s*=\s*")          # up to the opening quote
+    0x[0-9a-fA-F]{64}                                     # old 64-hex value
+    (" \s* \. \s* into \s* \(\) \s* \) \s* \] )           # the trailing ".into()]" (spaces allowed)
+    (?= \s* (?:\/\/[^\n]*\n|\s)*                          # allow whitespace/comments
+        pub \s+ operator_execute_pk \s* : \s* SecretString  # ensure this is the right field
+        \s* , )
+  }{$1$new$2}sgx;
+' "repos/zksync-os-server/lib/l1_sender/src/config.rs"
+
+}
+
+
+create_genesis_file() {
+    # complex upgrader 0x000000000000000000000000000000000000800f
+    l2_complex_upgrader=$(yq -r ".deployedBytecode.object" repos/zksync-era/contracts/l1-contracts/out/L2ComplexUpgrader.sol/L2ComplexUpgrader.json)
+
+    # l2 genesis upgrade 0x0000000000000000000000000000000000010001
+    l2_genesis_upgrade=$(yq -r ".deployedBytecode.object" repos/zksync-era/contracts/l1-contracts/out/L2GenesisUpgrade.sol/L2GenesisUpgrade.json)
+
+    # l2 wrapped base token (0x0000000000000000000000000000000000010007)
+    l2_wrapped_base_token=$(yq -r ".deployedBytecode.object" repos/zksync-era/contracts/l1-contracts/out/L2WrappedBaseToken.sol/L2WrappedBaseToken.json)
+cat > genesis.json <<EOF
+{
+  "initial_contracts": [
+    [
+      "0x000000000000000000000000000000000000800f",
+      "$l2_complex_upgrader"
+    ],
+    [
+      "0x0000000000000000000000000000000000010001",
+      "$l2_genesis_upgrade"
+    ],
+    [
+      "0x0000000000000000000000000000000000010007",
+      "$l2_wrapped_base_token"
+    ]
+  ],
+  "additional_storage": []
+}
+EOF
+}
+
 if [[ -z "$ZKSYNC_OS_SERVER_TAG" || -z "$ERA_CONTRACTS_TAG" || -z "$ZKSYNC_ERA_STACK_CLI_TAG" ]]; then
   printf "ERROR: One of the required settings is empty\n"
   exit 1
@@ -185,21 +267,22 @@ fi
 
 printf "*** Fetching repositories ***\n"
 
-#clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-server" $ZKSYNC_OS_SERVER_TAG
+clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-server" $ZKSYNC_OS_SERVER_TAG
 # zksync-era - checked out at the version for zkstack.
-#clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era-for-stack" $ZKSYNC_ERA_STACK_CLI_TAG
+clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era-for-stack" $ZKSYNC_ERA_STACK_CLI_TAG
 
-#clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era" main
-#pushd "repos/zksync-era/contracts" > /dev/null
-#verify_clean_worktree || { popd >/dev/null; return 1; }
-#checkout_tag "$ERA_CONTRACTS_TAG" || { popd >/dev/null; return 1; }
-#update_submodules_if_requested || { popd >/dev/null; return 1; }
-#popd > /dev/null
+## Ugh.. this has to be zksync-os-integration, as zkstack is taking some configs from there.. for genesis (ugh)..
+clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era" zksync-os-integration
+pushd "repos/zksync-era/contracts" > /dev/null
+verify_clean_worktree || { popd >/dev/null; return 1; }
+checkout_tag "$ERA_CONTRACTS_TAG" || { popd >/dev/null; return 1; }
+update_submodules_if_requested || { popd >/dev/null; return 1; }
+popd > /dev/null
 
 
 printf "*** Building zkstack cli ***\n"
 
-#build_zkstack
+build_zkstack
 
 zkstack_tool=repos/zksync-era-for-stack/zkstack_cli/target/debug/zkstack
 
@@ -207,7 +290,7 @@ printf "Initializing ecosystem...\n"
 
 pushd "ecosystem" >/dev/null
 
-#../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation localhost --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false
+../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation localhost --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false
 
 popd >/dev/null
 
@@ -237,6 +320,10 @@ deploy_l1_contracts $ERA_CONTRACTS_TAG
 
 bridgehub_address=$(grep 'bridgehub_proxy_addr:' ecosystem/local_v1/chains/era1/configs/contracts.yaml | awk '{print $2}')
 
+deployer_pk=$(yq ".deployer.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+operator_pk=$(yq ".operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+blob_operator_pk=$(yq ".blob_operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+
 printf "BridgeHub address: %s\n" "$bridgehub_address"
 
 
@@ -247,52 +334,28 @@ cargo run -- --bridgehub "$bridgehub_address"
 popd > /dev/null
 
 
-NEW_ADDR=$bridgehub_address perl -0777 -i -pe '
-  my $new = $ENV{"NEW_ADDR"};
-  s{
-    (\#\s*\[config\([^\)]*default_t\s*=\s*")   # everything up to opening quote
-    0x[0-9a-fA-F]{40}                          # old address
-    ("\.parse\(\)\.unwrap\(\)\)\])             # rest of the attribute
-  }{$1$new$2}xg
-' "repos/zksync-os-server/node/bin/src/config.rs"
+printf "updating bridgehub address & operators keys in rust file...\n"
 
+update_bridgehub_address
+update_operator_keys $operator_pk $blob_operator_pk $deployer_pk
+
+
+
+printf "creating genesis file"
 
 # Now let's generate genesis.json file
+create_genesis_file
 
+printf "Copying genesis.json and zkos-l1-state.json to zksync-os-server...\n"
 
-# complex upgrader 0x000000000000000000000000000000000000800f
-l2_complex_upgrader=$(yq -r ".deployedBytecode.object" repos/zksync-era/contracts/l1-contracts/out/L2ComplexUpgrader.sol/L2ComplexUpgrader.json)
+cp genesis.json repos/zksync-os-server/genesis/genesis.json
+cp zkos-l1-state.json repos/zksync-os-server/genesis/zkos-l1-state.json
 
-# l2 genesis upgrade 0x0000000000000000000000000000000000010001
-l2_genesis_upgrade=$(yq -r ".deployedBytecode.object" repos/zksync-era/contracts/l1-contracts/out/L2GenesisUpgrade.sol/L2GenesisUpgrade.json)
-
-# l2 wrapped base token (0x0000000000000000000000000000000000010007)
-l2_wrapped_base_token=$(yq -r ".deployedBytecode.object" repos/zksync-era/contracts/l1-contracts/out/L2WrappedBaseToken.sol/L2WrappedBaseToken.json)
-
-
-
-cat > genesis.json <<EOF
-{
-  "initial_contracts": [
-    [
-      "0x000000000000000000000000000000000000800f",
-      "$l2_complex_upgrader"
-    ],
-    [
-      "0x0000000000000000000000000000000000010001",
-      "$l2_genesis_upgrade"
-    ],
-    [
-      "0x0000000000000000000000000000000000010007",
-      "$l2_wrapped_base_token"
-    ]
-  ],
-  "additional_storage": []
-}
-EOF
 
 if ! kill -0 "$pid" 2>/dev/null; then
   echo "Process $pid crashed. Last 20 lines of log:"
   tail -n 20 "$logfile"
   exit 1
 fi
+
+printf "All done.\n"
