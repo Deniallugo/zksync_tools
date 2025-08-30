@@ -339,19 +339,24 @@ cargo run -- --bridgehub "$bridgehub_address"
 popd > /dev/null
 
 
-printf "creating genesis file"
+printf "creating genesis file\n"
 
 # Now let's generate genesis.json file
 create_genesis_file
 
 
-printf "Stopping anvil"
+printf "Stopping anvil\n"
 
+# First check if anvil was actually running.
 if ! kill -0 "$pid" 2>/dev/null; then
   echo "Process $pid crashed. Last 20 lines of log:"
   tail -n 20 "$logfile"
   exit 1
 fi
+
+# and now actually kill it.
+kill "$pid" 2>/dev/null || true
+
 
 
 
