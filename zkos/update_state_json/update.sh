@@ -101,6 +101,35 @@ clone_and_tag() {
     return 0
 }
 
+clone_and_tag_with_reset() {
+    local url="$1"
+    local path="$2"
+    local tag="$3"
+
+    if [[ -z "$url" || -z "$path" || -z "$tag" ]]; then
+        err "clone_and_tag requires url, path and tag"
+        return 1
+    fi
+
+    clone_repo "$url" "$path" || return 1
+
+    pushd "$path" >/dev/null
+
+    git reset --hard
+    git submodule update --init --recursive
+
+    verify_clean_worktree || { popd >/dev/null; return 1; }
+
+    checkout_tag "$tag" || { popd >/dev/null; return 1; }
+
+    update_submodules_if_requested || { popd >/dev/null; return 1; }
+
+    popd >/dev/null
+
+    return 0
+}
+
+
 
 build_zkstack() {
     printf "*** Compiling zkstack cli ***\n"
@@ -262,7 +291,7 @@ clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-s
 clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era-for-stack" $ZKSYNC_ERA_STACK_CLI_TAG
 
 ## Ugh.. this has to be zksync-os-integration, as zkstack is taking some configs from there.. for genesis (ugh)..
-clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era" origin/zksync-os-integration
+clone_and_tag_with_reset git@github.com:matter-labs/zksync-era.git "repos/zksync-era" origin/zksync-os-integration
 pushd "repos/zksync-era/contracts" > /dev/null
 printf "*** Preparing contracts in zksync-era repo ***\n"
 verify_clean_worktree || { popd >/dev/null; return 1; }
