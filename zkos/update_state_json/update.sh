@@ -160,20 +160,6 @@ deploy_l1_contracts() {
         rc=$?
     fi
 
-
-    # If it failed
-    if [ "${rc:-0}" -ne 0 ]; then
-        if grep -q "Unable to perform genesis on the database" "$log"; then
-            echo "Expected failure: $log"
-            rc=0   # treat as success
-        else
-            echo "Unexpected failure: $log" >&2
-            exit "$rc"
-        fi
-    fi
-
-    echo "Command considered successful"
-
   popd > /dev/null
 }
 
@@ -312,7 +298,26 @@ cleanup() {
   echo "Cleaning up..."
   kill "$pid" 2>/dev/null || true
 }
+
+on_error() {
+  local exit_code=$?
+  echo "❌ Script failed with exit code $exit_code"
+
+  # Only pause if interactive
+  if [[ -t 0 ]]; then
+    echo "Keeping anvil alive for debugging - press any button to stop..."
+    read -n 1 -s _
+  fi
+
+  cleanup
+
+
+  exit "$exit_code"
+}
+
 trap cleanup EXIT
+trap on_error ERR
+
 
 printf "Anvil started\n"
 sleep 2
