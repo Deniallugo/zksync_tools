@@ -150,8 +150,10 @@ deploy_l1_contracts() {
     log=$(mktemp)
 
 
+    # Init ecosystem -- with zksync-os by default.
     if ../../$zkstack_tool ecosystem init --deploy-paymaster=false --deploy-erc20=false --observability=false \
     --deploy-ecosystem --l1-rpc-url=http://localhost:8545 --chain era1 \
+    --zksync-os \
     --server-db-url=postgres://invalid --server-db-name=invalid --update-submodules=false 2>&1 | tee "$log"; then
         rc=0
     else
@@ -274,8 +276,9 @@ clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-s
 clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era-for-stack" $ZKSYNC_ERA_STACK_CLI_TAG
 
 ## Ugh.. this has to be zksync-os-integration, as zkstack is taking some configs from there.. for genesis (ugh)..
-clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era" zksync-os-integration
+clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era" origin/zksync-os-integration
 pushd "repos/zksync-era/contracts" > /dev/null
+printf "*** Preparing contracts in zksync-era repo ***\n"
 verify_clean_worktree || { popd >/dev/null; return 1; }
 checkout_tag "$ERA_CONTRACTS_TAG" || { popd >/dev/null; return 1; }
 update_submodules_if_requested || { popd >/dev/null; return 1; }
@@ -292,7 +295,7 @@ printf "Initializing ecosystem...\n"
 
 pushd "ecosystem" >/dev/null
 
-../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false
+../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false --update-submodules false
 
 popd >/dev/null
 
