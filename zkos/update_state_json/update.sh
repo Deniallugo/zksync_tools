@@ -216,7 +216,7 @@ update_operator_keys() {
         pub \s+ operator_commit_pk \s* : \s* SecretString  # ensure this is the right field
         \s* , )
   }{$1$new$2}sgx;
-' "repos/zksync-os-server/lib/l1_sender/src/config.rs"
+' "repos/zksync-os-server/node/bin/src/config.rs"
 
 
   NEW_PK="$2" perl -0777 -i -pe '
@@ -229,7 +229,7 @@ update_operator_keys() {
         pub \s+ operator_prove_pk \s* : \s* SecretString  # ensure this is the right field
         \s* , )
   }{$1$new$2}sgx;
-' "repos/zksync-os-server/lib/l1_sender/src/config.rs"
+' "repos/zksync-os-server/node/bin/src/config.rs"
 
 
 
@@ -243,7 +243,7 @@ update_operator_keys() {
         pub \s+ operator_execute_pk \s* : \s* SecretString  # ensure this is the right field
         \s* , )
   }{$1$new$2}sgx;
-' "repos/zksync-os-server/lib/l1_sender/src/config.rs"
+' "repos/zksync-os-server/node/bin/src/config.rs"
 
 }
 
