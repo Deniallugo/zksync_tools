@@ -359,12 +359,19 @@ deploy_l1_contracts $ERA_CONTRACTS_TAG
 
 bridgehub_address=$(grep 'bridgehub_proxy_addr:' ecosystem/local_v1/chains/era1/configs/contracts.yaml | awk '{print $2}')
 
-deployer_pk_dec=$(yq ".deployer.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
-deployer_pk=0x$(echo "obase=16; $deployer_pk_dec" | bc | tr 'A-F' 'a-f')
-operator_pk_dec=$(yq ".operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
-operator_pk=0x$(echo "obase=16; $operator_pk_dec" | bc | tr 'A-F' 'a-f')
-blob_operator_pk_dec=$(yq ".blob_operator.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
-blob_operator_pk=0x$(echo "obase=16; $blob_operator_pk_dec" | bc | tr 'A-F' 'a-f')
+get_wallet_pk() {
+    local wallet_name="$1"
+    pk_dec=$(yq ".${wallet_name}.private_key" ecosystem/local_v1/chains/era1/configs/wallets.yaml)
+    pk_hex=$(echo "obase=16; $pk_dec" | bc | tr 'A-F' 'a-f')
+    printf "0x%064s\n" "$pk_hex" | tr ' ' 0
+}
+
+
+operator_pk=$(get_wallet_pk "operator")
+prove_operator_pk=$(get_wallet_pk "prove_operator")
+execute_operator_pk=$(get_wallet_pk "execute_operator")
+
+
 
 printf "BridgeHub address: %s\n" "$bridgehub_address"
 
@@ -402,7 +409,7 @@ if [ "${COMMIT_CHANGES:-}" = "true" ]; then
     printf "updating bridgehub address & operators keys in rust file...\n"
 
     update_bridgehub_address
-    update_operator_keys $operator_pk $blob_operator_pk $deployer_pk
+    update_operator_keys $operator_pk $prove_operator_pk $execute_operator_pk
 
 
     printf "Copying genesis.json and zkos-l1-state.json to zksync-os-server...\n"
