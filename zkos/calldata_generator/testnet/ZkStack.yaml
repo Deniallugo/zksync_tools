@@ -1,0 +1,9 @@
+name: testnet
+l1_network: Sepolia
+link_to_code: ../repos/zksync-era
+chains: ./chains
+config: ./configs/
+default_chain: era
+era_chain_id: 270
+prover_version: NoProofs
+wallet_creation: Empty
