@@ -278,6 +278,20 @@ cat > genesis.json <<EOF
 EOF
 }
 
+# If ZKSYNC_ERA_STACK_CLI_TAG is unset or empty, default to origin/main
+if [[ -z "${ZKSYNC_ERA_STACK_CLI_TAG:-}" ]]; then
+  ZKSYNC_ERA_STACK_CLI_TAG="origin/main"
+  printf "ZKSYNC_ERA_STACK_CLI_TAG not set, defaulting to %s\n" "$ZKSYNC_ERA_STACK_CLI_TAG"
+fi
+
+# If ZKSYNC_OS_SERVER_TAG is unset or empty, default to origin/main
+if [[ -z "${ZKSYNC_OS_SERVER_TAG:-}" ]]; then
+  ZKSYNC_OS_SERVER_TAG="origin/main"
+  printf "ZKSYNC_OS_SERVER_TAG not set, defaulting to %s\n" "$ZKSYNC_OS_SERVER_TAG"
+fi
+
+
+
 if [[ -z "$ZKSYNC_OS_SERVER_TAG" || -z "$ERA_CONTRACTS_TAG" || -z "$ZKSYNC_ERA_STACK_CLI_TAG" ]]; then
   printf "ERROR: One of the required settings is empty\n"
   exit 1
