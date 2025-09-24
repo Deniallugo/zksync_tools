@@ -20,6 +20,17 @@ if you run with `UPDATE_ERA_CONTRACTS`, tool will automatically create a git com
 UPDATE_ERA_CONTRACTS=true ./generate.sh versions/2025-08-29
 ```
 
+## Adding new version
+
+Create a new directory with a fresh data, and copy settings.env
+
+Then update the correct tags for contracts, zkos and zkos wrapper.
+Make sure that zkos-wrapper is the version that airbender-prover is using.
+
+Then run the command above: `./generate versions/YOUR_DIR`
+
+You might want to run it with UPDATE_ERA_CONTRACTS too.
+
 
 ## Development
 

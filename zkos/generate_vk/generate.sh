@@ -122,18 +122,19 @@ clone_and_tag() {
 
 
 create_snark_vk() {
-    pushd "repos/zkos-wrapper" >/dev/null
     # remove snark_vk_expected.json if exists
     if [[ -f "repos/snark_vk_expected.json" ]]; then
         rm "repos/snark_vk_expected.json"
     fi
-    cargo run --bin wrapper --release -- generate-snark-vk --input-binary ../zksync-os-server/multiblock_batch.bin --trusted-setup-file ../setup.key --output-dir ../
+    pushd "repos/zkos-wrapper" >/dev/null
+    cargo run --bin wrapper --release -- generate-snark-vk --input-binary ../zksync-os/zksync_os/multiblock_batch.bin --trusted-setup-file ../setup.key --output-dir ../
+    popd >/dev/null
+
     # check that snark_vk_expected.json is present
     if [[ ! -f "repos/snark_vk_expected.json" ]]; then
         printf "ERROR: Expected file not found: repos/snark_vk_expected.json\n"
         exit 1
     fi
-    popd >/dev/null
 }
 
 create_solidity_files() {
@@ -164,7 +165,7 @@ fi
 
 
 
-if [[ -z "$ZKSYNC_OS_SERVER_TAG" || -z "$ZKOS_WRAPPER_TAG" || -z "$ZKSYNC_AIRBENDER_PROVER_TAG" || -z "$ERA_CONTRACTS_TAG" ]]; then
+if [[ -z "$ZKOS_WRAPPER_TAG" || -z "$ZKSYNC_OS_TAG" || -z "$ERA_CONTRACTS_TAG" ]]; then
   printf "ERROR: One of the required settings is empty\n"
   exit 1
 fi
@@ -172,9 +173,8 @@ fi
 
 printf "*** Fetching repositories ***\n"
 
-clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-server" $ZKSYNC_OS_SERVER_TAG
 clone_and_tag git@github.com:matter-labs/zkos-wrapper.git "repos/zkos-wrapper" $ZKOS_WRAPPER_TAG
-clone_and_tag git@github.com:matter-labs/zksync-airbender-prover.git "repos/zksync-airbender-prover" $ZKSYNC_AIRBENDER_PROVER_TAG
+clone_and_tag git@github.com:matter-labs/zksync-os.git "repos/zksync-os" $ZKSYNC_OS_TAG
 clone_and_tag git@github.com:matter-labs/era-contracts.git "repos/era-contracts" $ERA_CONTRACTS_TAG
 
 ## TODO: here add some sanity checks.
@@ -204,7 +204,7 @@ if [ "${UPDATE_ERA_CONTRACTS:-}" = "true" ]; then
   # if there is any git diff - create a new branch and push.
   if ! git diff --quiet; then
     git checkout -b "update-vk-from-script-$(date +%Y%m%d%H%M%S)"
-    git commit -a -m "Update era contracts - server: $ZKSYNC_OS_SERVER_TAG, wrapper: $ZKOS_WRAPPER_TAG"
+    git commit -a -m "Update era contracts - zkos: $ZKSYNC_OS_TAG, wrapper: $ZKOS_WRAPPER_TAG"
     git push origin HEAD
   fi
 
