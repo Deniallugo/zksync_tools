@@ -224,7 +224,7 @@ printf "\n**** Adding verifiers to the verifier contract *****\n"
 printf "Please use the calldata below (or call the command) with $owner private key\n"
 
 printf "CALLDATA: \n"
-cast calldata 'addVerifier(uint32,address,address)' $VERIFIER_ID $plonk_address $fflonk_address
+cast calldata 'addVerifier(uint32,address,address)' $VERIFIER_ID $fflonk_address $plonk_address
 
 printf "\n\nCOMMAND:\n"
 
