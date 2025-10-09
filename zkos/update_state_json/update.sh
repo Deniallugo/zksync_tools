@@ -349,7 +349,7 @@ printf "Initializing ecosystem...\n"
 
 pushd "ecosystem" >/dev/null
 
-../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false
+../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false --zksync-os
 
 popd >/dev/null
 
