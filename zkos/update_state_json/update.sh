@@ -181,9 +181,7 @@ deploy_l1_contracts() {
 
     # Init ecosystem -- with zksync-os by default.
     if ../../$zkstack_tool ecosystem init --deploy-paymaster=false --deploy-erc20=false --observability=false \
-    --deploy-ecosystem --l1-rpc-url=http://localhost:8545 --chain era1 \
-    --zksync-os \
-    --server-db-url=postgres://invalid --server-db-name=invalid 2>&1 | tee "$log"; then
+    --deploy-ecosystem --l1-rpc-url=http://localhost:8545 --zksync-os 2>&1 | tee "$log"; then
         rc=0
     else
         rc=$?
@@ -329,12 +327,12 @@ clone_and_tag git@github.com:matter-labs/zksync-os-server.git "repos/zksync-os-s
 # zksync-era - checked out at the version for zkstack.
 clone_and_tag git@github.com:matter-labs/zksync-era.git "repos/zksync-era-for-stack" $ZKSYNC_ERA_STACK_CLI_TAG
 
-## Ugh.. this has to be zksync-os-integration, as zkstack is taking some configs from there.. for genesis (ugh)..
-clone_and_tag_with_reset git@github.com:matter-labs/zksync-era.git "repos/zksync-era" origin/zksync-os-integration
-pushd "repos/zksync-era/contracts" > /dev/null
-printf "*** Preparing contracts in zksync-era repo ***\n"
+# era-contracts - with the latest contracts.
+clone_and_tag git@github.com:matter-labs/era-contracts.git "repos/era-contracts" $ERA_CONTRACTS_TAG
+
+pushd "repos/era-contracts" > /dev/null
+printf "*** Preparing contracts  ***\n"
 verify_clean_worktree || { popd >/dev/null; return 1; }
-checkout_tag "$ERA_CONTRACTS_TAG" || { popd >/dev/null; return 1; }
 update_submodules_if_requested || { popd >/dev/null; return 1; }
 popd > /dev/null
 
@@ -348,9 +346,10 @@ zkstack_tool=repos/zksync-era-for-stack/zkstack_cli/target/release/zkstack
 printf "Initializing ecosystem...\n"
 
 pushd "ecosystem" >/dev/null
-
-../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false --zksync-os
-
+../$zkstack_tool ecosystem create --ecosystem-name local-v1 --l1-network localhost --chain-name era1 --chain-id 270 --prover-mode no-proofs --wallet-creation random --link-to-code ../../repos/zksync-era-for-stack --l1-batch-commit-data-generator-mode rollup --start-containers false   --base-token-address 0x0000000000000000000000000000000000000001 --base-token-price-nominator 1 --base-token-price-denominator 1 --evm-emulator false --zksync-os
+pushd "local_v1"
+../../$zkstack_tool ctm set-ctm-contracts --contracts-src-path ../../repos/era-contracts/ --default-configs-src-path ../../repos/zksync-os-server/genesis --zksync-os
+popd >/dev/null
 popd >/dev/null
 
 
