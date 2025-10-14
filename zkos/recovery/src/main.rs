@@ -1,7 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use alloy::{
-    primitives::{Address, B256},
+    primitives::Address,
     providers::{Provider, ProviderBuilder},
     rpc::types::Filter,
     sol_types::SolEvent, // for ABI-safe decoding of the commit function
@@ -12,11 +12,8 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    chain_genesis::get_genesis_upgrade,
-    contracts::BlockCommit,
-    state::BlockchainState,
-    state_genesis::init_genesis,
-    statediffs::{BatchInfo, BlockInfo},
+    chain_genesis::get_genesis_upgrade, contracts::BlockCommit, state::BlockchainState,
+    state_genesis::init_genesis, statediffs::BatchInfo,
 };
 
 pub mod bytecodes;
@@ -37,7 +34,6 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
-
 pub enum Command {
     /// Recover state from L1, check correctness and optionally write to json file.
     Recover(RecoverArgs),
@@ -53,6 +49,10 @@ pub struct WriteToDBArgs {
     /// RocksDB path to write the state to.
     #[arg(long)]
     db_path: String,
+
+    /// WriteBatch chunk size (number of entries per batch)
+    #[arg(long, default_value_t = 100_000)]
+    batch_size: usize,
 }
 
 #[derive(Debug, Parser)]
@@ -62,8 +62,17 @@ pub struct RecoverArgs {
     rpc: String,
 
     /// Diamond Proxy address of the zkSync chain.
+    /// Can be omitted if --bridgehub and --chain-id are provided (will be auto-discovered from L1).
     #[arg(long)]
-    address: String,
+    address: Option<String>,
+
+    /// Bridgehub contract address on L1 (for auto-discovering diamond proxy)
+    #[arg(long)]
+    bridgehub: Option<String>,
+
+    /// Chain ID (for auto-discovering diamond proxy from bridgehub)
+    #[arg(long)]
+    chain_id: Option<u64>,
 
     /// Start block (inclusive). If omitted, uses earliest.
     #[arg(long)]
@@ -76,6 +85,10 @@ pub struct RecoverArgs {
     /// Chunk size (number of blocks per request)
     #[arg(long, default_value_t = 2_000u64)]
     chunk: u64,
+
+    /// Concurrency (number of concurrent operations for both chunk scanning and transaction fetching).
+    #[arg(long, default_value_t = 10)]
+    concurrency: usize,
 
     /// Output file (JSON). If omitted, prints summary to stdout.
     #[arg(long)]
@@ -100,14 +113,82 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Fetch diamond proxy address by calling getZKChain(uint256) on bridgehub (L1 only)
+async fn fetch_diamond_proxy<P: Provider>(
+    l1_provider: &P,
+    bridgehub: Address,
+    chain_id: u64,
+) -> Result<Address> {
+    use alloy::primitives::{U256, keccak256};
+
+    // Encode the call: getZKChain(uint256)
+    // Calculate function selector dynamically: keccak256("getZKChain(uint256)")
+    let function_signature = "getZKChain(uint256)";
+    let hash = keccak256(function_signature.as_bytes());
+    let selector = &hash[0..4]; // First 4 bytes
+
+    tracing::debug!(
+        "Function signature: {}, selector: 0x{}",
+        function_signature,
+        hex::encode(selector)
+    );
+
+    let mut calldata = selector.to_vec();
+
+    // Encode chain_id as uint256 (32 bytes, big-endian)
+    let chain_id_u256 = U256::from(chain_id);
+    let chain_id_bytes = chain_id_u256.to_be_bytes::<32>();
+    calldata.extend_from_slice(&chain_id_bytes);
+
+    // Make eth_call
+    let call_data = alloy::primitives::Bytes::from(calldata);
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(bridgehub)
+        .input(call_data.into());
+
+    let result = l1_provider
+        .call(tx)
+        .await
+        .context("failed to call getZKChain on bridgehub")?;
+
+    // Result should be a 32-byte address (padded)
+    if result.len() < 32 {
+        bail!("invalid response from getZKChain: too short");
+    }
+
+    // Extract the last 20 bytes (address is right-aligned in 32-byte word)
+    let address_bytes = &result[result.len() - 20..];
+    let diamond_proxy = Address::from_slice(address_bytes);
+
+    Ok(diamond_proxy)
+}
+
 async fn run_recover(args: RecoverArgs) -> Result<()> {
     // Load genesis from file.
     let genesis = init_genesis();
 
     let provider = ProviderBuilder::new().connect_http(args.rpc.parse()?);
 
-    let target = Address::from_str(&args.address)
-        .with_context(|| format!("invalid address: {}", args.address))?;
+    // Resolve diamond proxy address
+    let target = if let Some(address) = args.address {
+        Address::from_str(&address).with_context(|| format!("invalid address: {}", address))?
+    } else if let (Some(bridgehub_str), Some(chain_id)) = (args.bridgehub, args.chain_id) {
+        tracing::info!("Auto-discovering diamond proxy from L1 bridgehub");
+
+        let bridgehub = Address::from_str(&bridgehub_str)
+            .with_context(|| format!("invalid bridgehub address: {}", bridgehub_str))?;
+        tracing::info!("Bridgehub address: {}", bridgehub);
+        tracing::info!("Chain ID: {}", chain_id);
+
+        let diamond_proxy = fetch_diamond_proxy(&provider, bridgehub, chain_id).await?;
+        tracing::info!("Diamond proxy address: {}", diamond_proxy);
+
+        diamond_proxy
+    } else {
+        bail!(
+            "Either --address must be provided, or both --bridgehub and --chain-id for auto-discovery"
+        );
+    };
 
     // Resolve default bounds
     let latest = provider
@@ -129,33 +210,28 @@ async fn run_recover(args: RecoverArgs) -> Result<()> {
     );
 
     // First - try to find genesis upgrade event (should be somewhere at the beginning).
-    let genesis_local_info = get_genesis_upgrade(&provider, target, from, to, args.chunk).await?;
+    let genesis_local_info =
+        get_genesis_upgrade(&provider, target, from, to, args.chunk, args.concurrency).await?;
 
     // Now we can create initial blockchain state.
     let mut blockchain_state = BlockchainState::new(genesis.clone(), genesis_local_info);
 
-    // Then start scanning for 'CommitBatches' call, and collecting the state.
-    let mut start = from;
-    let chunks_total = (to - from) / args.chunk + 1;
-    tracing::debug!("Total chunks to scan: {}", chunks_total);
-    let mut chunks_done = 0;
-    while start <= to {
-        chunks_done += 1;
-        if chunks_done % 10 == 0 {
-            tracing::debug!("Progress: {}/{} chunks done", chunks_done, chunks_total);
-        }
-        let end = (start + args.chunk - 1).min(to);
-        let scan_results = get_commit_batches_from_range(&provider, target, start, end).await?;
+    // Phase 1: Scan for CommitBatches events
+    let all_logs_with_hashes =
+        scan_commit_events(&provider, target, from, to, args.chunk, args.concurrency).await?;
 
-        let mut batch_numbers = scan_results.keys().cloned().collect::<Vec<_>>();
-        batch_numbers.sort_unstable();
+    // Phase 2: Fetch transactions and decode batches
+    let all_batches =
+        fetch_and_decode_batches(&provider, all_logs_with_hashes, args.concurrency).await?;
 
-        for batch_number in batch_numbers {
-            let batch_info = scan_results.get(&batch_number).unwrap();
-            blockchain_state.apply_batch(batch_number, batch_info);
-        }
+    // Apply batches in order after all chunks are collected
+    let mut batch_numbers = all_batches.keys().cloned().collect::<Vec<_>>();
+    batch_numbers.sort_unstable();
 
-        start = end.saturating_add(1);
+    tracing::info!("Applying {} batches in order...", batch_numbers.len());
+    for batch_number in batch_numbers {
+        let batch_info = all_batches.get(&batch_number).unwrap();
+        blockchain_state.apply_batch(batch_number, batch_info);
     }
 
     tracing::info!(
@@ -175,12 +251,151 @@ async fn run_recover(args: RecoverArgs) -> Result<()> {
     Ok(())
 }
 
+/// Phase 1: Scan all chunks for CommitBatches events, collecting transaction hashes
+async fn scan_commit_events<P: Provider + Clone>(
+    provider: &P,
+    target: Address,
+    from: u64,
+    to: u64,
+    chunk_size: u64,
+    concurrency: usize,
+) -> Result<Vec<(alloy::primitives::B256, alloy::rpc::types::Log)>> {
+    use futures::stream::{self, StreamExt};
+
+    let chunks_total = (to - from) / chunk_size + 1;
+    tracing::info!(
+        "Scanning for CommitBatches events: {} total chunks (concurrency={})",
+        chunks_total,
+        concurrency
+    );
+
+    let chunk_ranges: Vec<_> = (0..chunks_total)
+        .map(|i| {
+            let start = from + (i * chunk_size);
+            let end = (start + chunk_size - 1).min(to);
+            (start, end)
+        })
+        .collect();
+
+    let mut chunk_stream = stream::iter(chunk_ranges)
+        .map(|(start, end)| {
+            let provider = provider.clone();
+            async move { get_commit_batches_from_range(&provider, target, start, end).await }
+        })
+        .buffer_unordered(concurrency);
+
+    let mut chunks_done = 0;
+    let mut all_logs_with_hashes = Vec::new();
+    let mut last_log_time = std::time::Instant::now();
+
+    while let Some(result) = chunk_stream.next().await {
+        chunks_done += 1;
+        all_logs_with_hashes.extend(result?);
+
+        let should_log = chunks_done % concurrency == 0 || last_log_time.elapsed().as_secs() >= 5;
+        if should_log {
+            tracing::info!(
+                "Commit scan progress: {}/{} chunks ({:.1}%), found {} commit events so far",
+                chunks_done,
+                chunks_total,
+                (chunks_done as f64 / chunks_total as f64) * 100.0,
+                all_logs_with_hashes.len()
+            );
+            last_log_time = std::time::Instant::now();
+        }
+    }
+
+    tracing::info!(
+        "Finished scanning all chunks, found {} commit events total",
+        all_logs_with_hashes.len()
+    );
+
+    Ok(all_logs_with_hashes)
+}
+
+/// Phase 2: Fetch all transactions and decode into BatchInfo
+async fn fetch_and_decode_batches<P: Provider + Clone>(
+    provider: &P,
+    logs_with_hashes: Vec<(alloy::primitives::B256, alloy::rpc::types::Log)>,
+    concurrency: usize,
+) -> Result<HashMap<u64, BatchInfo>> {
+    use futures::stream::{self, StreamExt};
+
+    let total = logs_with_hashes.len();
+    tracing::info!(
+        "Fetching {} transactions with concurrency {}...",
+        total,
+        concurrency
+    );
+
+    let fetch_start = std::time::Instant::now();
+    let mut last_log_time = std::time::Instant::now();
+
+    let mut tx_stream = stream::iter(logs_with_hashes)
+        .map(|(tx_hash, lg)| {
+            let provider = provider.clone();
+            async move {
+                let tx_result = provider.get_transaction_by_hash(tx_hash).await;
+                (tx_hash, lg, tx_result)
+            }
+        })
+        .buffer_unordered(concurrency);
+
+    let mut all_batches = HashMap::new();
+    let mut processed = 0;
+
+    while let Some((tx_hash, lg, tx_result)) = tx_stream.next().await {
+        processed += 1;
+
+        if last_log_time.elapsed().as_secs() >= 5 {
+            tracing::info!(
+                "Transaction fetch progress: {}/{} ({:.1}%)",
+                processed,
+                total,
+                (processed as f64 / total as f64) * 100.0
+            );
+            last_log_time = std::time::Instant::now();
+        }
+
+        let tx = match tx_result {
+            Ok(Some(tx)) => tx,
+            Ok(None) => {
+                tracing::warn!("Transaction not found for hash {:?}", tx_hash);
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch transaction {:?}: {}", tx_hash, e);
+                continue;
+            }
+        };
+
+        let prim_log = alloy::primitives::Log {
+            address: lg.address(),
+            data: lg.data().clone(),
+        };
+
+        if let Ok(ev) = BlockCommit::decode_log(&prim_log) {
+            let batch_info = BatchInfo::parse(ev, tx);
+            all_batches.insert(batch_info.batch_number, batch_info);
+        }
+    }
+
+    tracing::info!(
+        "Finished fetching all transactions in {:.2}s ({:.0} tx/s), collected {} batches total",
+        fetch_start.elapsed().as_secs_f64(),
+        total as f64 / fetch_start.elapsed().as_secs_f64(),
+        all_batches.len()
+    );
+
+    Ok(all_batches)
+}
+
 async fn get_commit_batches_from_range<P: Provider + Clone>(
     provider: &P,
     address: Address,
     from: u64,
     to: u64,
-) -> Result<HashMap<u64, BatchInfo>> {
+) -> Result<Vec<(alloy::primitives::B256, alloy::rpc::types::Log)>> {
     // Build a filter: address + topic0 = event signature. Indexed params (batchNumber, batchHash, commitment)
     // can also be filtered later via `topic1/2/3` if needed.
     let filter = Filter::new()
@@ -195,28 +410,11 @@ async fn get_commit_batches_from_range<P: Provider + Clone>(
         .await
         .context("get_logs(BlockCommit)")?;
 
-    let mut results = HashMap::new();
-
-    for lg in logs {
-        // Each log belongs to a tx; pull its calldata using the tx hash.
-        let tx_hash: B256 = lg.transaction_hash.context("log missing tx hash")?;
-        let tx = provider
-            .get_transaction_by_hash(tx_hash)
-            .await
-            .with_context(|| format!("get_tx {}", tx_hash))?;
-        let Some(tx) = tx else { continue };
-
-        // Decode the event (topics+data) using the generated type.
-        // Convert the RPC log into the primitives Log expected by the SolEvent decoder.
-        let prim_log = alloy::primitives::Log {
-            address: lg.address(),
-            data: lg.data().clone(),
-        };
-        if let Ok(ev) = BlockCommit::decode_log(&prim_log) {
-            let batch_info = BatchInfo::parse(ev, tx);
-            results.insert(batch_info.batch_number, batch_info);
-        }
-    }
+    // Collect logs with their transaction hashes
+    let results: Vec<_> = logs
+        .into_iter()
+        .filter_map(|log| log.transaction_hash.map(|hash| (hash, log)))
+        .collect();
 
     Ok(results)
 }
@@ -234,7 +432,7 @@ pub fn write_to_db(args: WriteToDBArgs) -> Result<()> {
         hex::encode(blockchain_state.tree.compute_root())
     );
 
-    sequencer_db::write_to_db(&args.db_path, blockchain_state)?;
+    sequencer_db::write_to_db(&args.db_path, blockchain_state, args.batch_size)?;
 
     tracing::info!("Wrote blockchain state to RocksDB at {}", args.db_path);
 
