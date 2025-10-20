@@ -180,7 +180,7 @@ deploy_l1_contracts() {
 
 
     # Init ecosystem -- with zksync-os by default.
-    if ../../$zkstack_tool ecosystem init --deploy-paymaster=false --deploy-erc20=false --observability=false \
+    if ../../$zkstack_tool ecosystem init --deploy-paymaster=false --deploy-erc20=false --observability=false --no-port-reallocation \
     --deploy-ecosystem --l1-rpc-url=http://localhost:8545 --zksync-os 2>&1 | tee "$log"; then
         rc=0
     else
